@@ -10,11 +10,94 @@ app = Flask(__name__)
 
 model_dict = pickle.load(open('./model.p', 'rb'))
 model = model_dict['model']
-labels_dict = {0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F', 6: 'G', 7: 'H', 8: 'I', 9: 'J', 10: 'K', 11: 'L', 12: 'M', 13: 'N', 14: 'O', 15: 'P', 16: 'Q', 17: 'R', 18: 'S', 19: 'T', 20: 'U', 21: 'V', 22: 'W', 23: 'X', 24: 'Y', 25: 'Z', 26: 'Space'}
+labels_dict = {
+    1: 'A',
+    2: 'B',
+    3: 'C',
+    4: 'D',
+    5: 'E',
+    6: 'F',
+    7: 'G',
+    8: 'H',
+    9: 'I',
+    10: 'J',
+    11: 'K',
+    12: 'L',
+    13: 'M',
+    14: 'N',
+    15: 'O',
+    16: 'P',
+    17: 'Q',
+    18: 'R',
+    19: 'S',
+    20: 'T',
+    21: 'U',
+    22: 'V',
+    23: 'W',
+    24: 'X',
+    25: 'Y',
+    26: 'Z',
+    27: 'Space',
+    28: 'Thanks ',
+    29: 'Hello ',
+    30: 'Me ',
+    31: 'Help ',
+    32: 'Name ',
+    33: 'My ',
+    34: 'Is ',
+    35: 'What ',
+    36: 'You ',
+    37: 'Fine ',
+    38: 'Yes ',
+    39: 'No ',
+    40: 'Sorry ',
+    41: 'Understand ',
+    42: 'Again ',
+    43: 'Ready ',
+    44: 'Great ',
+    45: 'Friend ',
+    46: 'Not Yet ',
+    47: 'How ',
+    48: 'Your ',
+}
 
 # MediaPipe
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=True, min_detection_confidence=0.3)
+hands = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3)
+
+def extract_hand_features(results):
+    if not results.multi_hand_landmarks:
+        return None
+
+    detected_hands = {}
+    for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+        label = handedness.classification[0].label
+        landmarks = [(landmark.x, landmark.y) for landmark in hand_landmarks.landmark]
+        detected_hands[label] = landmarks
+
+    all_points = [point for landmarks in detected_hands.values() for point in landmarks]
+    min_x = min(x for x, _ in all_points)
+    min_y = min(y for _, y in all_points)
+    max_x = max(x for x, _ in all_points)
+    max_y = max(y for _, y in all_points)
+    width = max(max_x - min_x, 1e-6)
+    height = max(max_y - min_y, 1e-6)
+
+    data_aux = []
+    for hand_label in ('Left', 'Right'):
+        landmarks = detected_hands.get(hand_label)
+        if landmarks:
+            for x, y in landmarks:
+                data_aux.append((x - min_x) / width)
+                data_aux.append((y - min_y) / height)
+        else:
+            data_aux.extend([0] * 42)
+
+    return data_aux
+
+@app.route('/', methods=['GET'])
+def home():
+    return "Server is running...", 200
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -24,26 +107,17 @@ def predict():
     file = request.files['image']
     img_array = np.frombuffer(file.read(), np.uint8)
     frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({'error': 'Không đọc được hình ảnh'}), 400
 
-    H, W, _ = frame.shape
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(frame_rgb)
 
-    if results.multi_hand_landmarks:
-        hand_landmarks = results.multi_hand_landmarks[0]
-
-        data_aux, x_, y_ = [], [], []
-
-        for lm in hand_landmarks.landmark:
-            x_.append(lm.x)
-            y_.append(lm.y)
-
-        for lm in hand_landmarks.landmark:
-            data_aux.append(lm.x - min(x_))
-            data_aux.append(lm.y - min(y_))
-
+    data_aux = extract_hand_features(results)
+    if data_aux:
         prediction = model.predict([np.asarray(data_aux)])
-        predicted_character = labels_dict[int(prediction[0])]
+        predicted_label = int(prediction[0])
+        predicted_character = labels_dict.get(predicted_label, 'UNKNOWN {}'.format(predicted_label))
 
         return jsonify(predicted_character)
 
